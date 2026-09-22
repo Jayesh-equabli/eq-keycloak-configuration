@@ -40,6 +40,26 @@ Trust dashboard (**Settings → Authentication → Add new → OIDC**):
 | Certificate URL | `https://<keycloak-host>/realms/<realm>/protocol/openid-connect/certs` |
 | Scopes | `openid email profile` |
 
+> **One client per front-end, not one shared client.** If more than one Equabli-internal front-end
+> (e.g. `dev.eqapp.ai` and `client.eqapp.ai`) sits behind Cloudflare Access, **do not** point them
+> at the same Cloudflare Access identity-provider integration / the same `cloudflare-oidc-<env>`
+> client. Cloudflare Access's callback URL is identical for every app behind it
+> (`https://<team>.cloudflareaccess.com/cdn-cgi/access/callback`), so if two front-ends share one
+> IdP integration, Keycloak has **no way to tell which front-end a login came from** — the
+> `redirect_uri` it sees is always Cloudflare's own callback, never the real app host. To let
+> `MigratedUserAuthenticator` send a migrated user back to the correct site after password
+> setup, create a **separate** Cloudflare Access identity-provider integration (and a separate
+> Keycloak client, e.g. `cloudflare-oidc-dev` / `cloudflare-oidc-client`) per front-end, and assign
+> each Access Application to only its own integration. Then, on the **Settings** tab of that
+> client, set **Home URL** to that front-end's real origin, e.g. `https://dev.eqapp.ai` on
+> `cloudflare-oidc-dev` (Keycloak clients have no generic custom-attribute editor in the admin
+> console, so this reuses the built-in Home URL field rather than a made-up attribute), **and**
+> add that same origin — with a trailing `*`, e.g. `https://dev.eqapp.ai/*` — to the client's
+> **Valid redirect URIs** alongside the Cloudflare callback entry from step 1 above. Skipping the
+> redirect-URI entry makes the emailed setup link 400 right after the user finishes
+> UPDATE_PASSWORD/CONFIGURE_TOTP, for the same reason described in step 4 below for the forwarder
+> URL. See [README.md](README.md#post-setup-redirect-where-the-user-lands-afterwards).
+
 ## 2. `identity-service` client (token validation)
 
 `eq-identity-service` reads this **exact** client ID (`identity-service`) from its

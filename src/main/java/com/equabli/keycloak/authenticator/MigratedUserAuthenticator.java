@@ -10,6 +10,7 @@ import org.keycloak.authentication.AuthenticationFlowContext;
 import org.keycloak.authentication.actiontoken.execactions.ExecuteActionsActionToken;
 import org.keycloak.authentication.authenticators.browser.UsernamePasswordForm;
 import org.keycloak.common.util.Time;
+import org.keycloak.models.ClientModel;
 import org.keycloak.models.KeycloakSession;
 import org.keycloak.models.RealmModel;
 import org.keycloak.models.UserModel;
@@ -175,7 +176,7 @@ public class MigratedUserAuthenticator extends UsernamePasswordForm {
                 UserModel.RequiredAction.UPDATE_PASSWORD.name(),
                 UserModel.RequiredAction.CONFIGURE_TOTP.name());
         String clientId = context.getAuthenticationSession().getClient().getClientId();
-        String redirectUri = resolveRedirectUri(realm, user);
+        String redirectUri = resolveRedirectUri(context, user);
 
         ExecuteActionsActionToken token = new ExecuteActionsActionToken(user.getId(), user.getEmail(),
                 absoluteExpirationInSecs, actions, redirectUri, clientId);
@@ -187,20 +188,39 @@ public class MigratedUserAuthenticator extends UsernamePasswordForm {
     }
 
     /**
-     * Where the user lands once UPDATE_PASSWORD + CONFIGURE_TOTP complete. Each migrated user has a
-     * different destination (their client/partner {@code env_instance_url}), which Keycloak cannot
-     * validate individually — its <em>Valid redirect URIs</em> allow a trailing {@code *} only on
-     * the path, never in the host. So instead of the final per-user URL we point at one stable
-     * identity-service forwarder ({@link IdentityServiceConstants#postSetupRedirectUrl()}) carrying
-     * the Keycloak user id; that endpoint resolves the real instance URL server-side and 302-redirects
-     * to it. Only the single forwarder URL then needs registering on the client.
+     * Where the user lands once UPDATE_PASSWORD + CONFIGURE_TOTP complete.
      *
-     * <p>The forwarder base URL is resolved per-realm by {@link IdentityServiceConstants#baseUrl(RealmModel)}
-     * (realm attribute, then {@code IDENTITY_SERVICE_BASE_URL}, then
-     * {@link IdentityServiceConstants#DEFAULT_BASE_URL}); the static forwarder path is appended by
-     * {@link IdentityServiceConstants#postSetupRedirectUrl(RealmModel)}.</p>
+     * <p>Equabli-internal users can have access to more than one front-end sharing this realm
+     * (e.g. {@code dev.eqapp.ai} and {@code client.eqapp.ai}) and expect to land back on whichever
+     * one they logged in from. That destination can't be derived from the OIDC {@code redirect_uri}
+     * of the login request: when the authenticating client is a Cloudflare Access IdP integration
+     * (see {@code cloudflare-oidc-<env>} in {@code NEW_REALM_CHECKLIST.md}), every login's
+     * {@code redirect_uri} is Cloudflare's own fixed callback regardless of which front-end the
+     * user actually started from — Cloudflare Access hides the real origin from Keycloak entirely.
+     * Instead each front-end needs its <em>own</em> Keycloak client (and so its own Cloudflare
+     * Access identity-provider integration) with its <b>Home URL</b> (Settings tab) set to that
+     * front-end's origin — {@link IdentityServiceConstants#postLoginRedirectOrigin(ClientModel)} —
+     * and whichever client authenticated the user, we redirect straight to its Home URL.</p>
+     *
+     * <p>Every other client (partner/client migrated users, each with a different per-tenant host,
+     * and no Home URL set) falls back to the single stable identity-service forwarder ({@link
+     * IdentityServiceConstants#postSetupRedirectUrl(RealmModel)}) carrying the Keycloak user id;
+     * that endpoint resolves the real instance URL server-side and 302-redirects to it. Keycloak's
+     * <em>Valid redirect URIs</em> allow a trailing {@code *} only on the path, never the host, so
+     * per-tenant URLs can't be registered directly — only the single forwarder URL needs
+     * registering on the client.</p>
      */
-    private String resolveRedirectUri(RealmModel realm, UserModel user) {
+    private String resolveRedirectUri(AuthenticationFlowContext context, UserModel user) {
+        RealmModel realm = context.getRealm();
+        ClientModel client = context.getAuthenticationSession().getClient();
+        String origin = IdentityServiceConstants.postLoginRedirectOrigin(client);
+        if (origin != null) {
+            String direct = origin + "/";
+            log.infof("redirect uri, userName %s, client %s, returning to originating site %s",
+                    user.getUsername(), client.getClientId(), direct);
+            return direct;
+        }
+
         String base = IdentityServiceConstants.postSetupRedirectUrl(realm);
         String sep = base.contains("?") ? "&" : "?";
         base = base + sep + "uid=" + user.getId();

@@ -81,6 +81,24 @@ console, duplicate the realm's **browser** flow, replace the *Username Password 
 inside the forms subflow with **Username Password Form (Migration Setup Email)** (same requirement),
 and bind the copy as the realm's Browser Flow.
 
+**Equabli-internal users with more than one front-end (e.g. `dev.eqapp.ai` and
+`client.eqapp.ai`):** rather than always going through the forwarder above, a migrated user can be
+sent straight back to the site they logged in from. This can't be derived automatically from the
+login request when the client is a Cloudflare Access IdP integration — Cloudflare's callback URL
+is the same for every app behind it, so Keycloak never sees the real front-end host. Instead, give
+each front-end its own Keycloak client (its own Cloudflare Access identity-provider integration —
+see [NEW_REALM_CHECKLIST.md](NEW_REALM_CHECKLIST.md#1-cloudflare-access-oidc-client)) and set that
+client's **Home URL** (Settings tab — a genuine admin-console field; Keycloak clients have no
+generic custom-attribute editor) to its real origin, e.g. `https://dev.eqapp.ai`.
+`MigratedUserAuthenticator` checks the authenticating client's Home URL first, before falling back
+to the forwarder.
+
+**Also register the Home URL under that same client's Valid Redirect URIs** (e.g.
+`https://dev.eqapp.ai/*`), alongside the existing Cloudflare callback entry. The action-token link
+Keycloak emails the user is validated against the token's `azp` client's Valid Redirect URIs when
+clicked — exactly the same check described above for the forwarder URL — so without this entry the
+emailed setup link 400s right after the user finishes UPDATE_PASSWORD/CONFIGURE_TOTP.
+
 > **New-realm gotcha:** when duplicating the browser flow for a new realm, check the config (gear
 > icon) on the **User session count limiter** execution that precedes the password form. If it was
 > copied with a stale/leftover session-limit config (or one meant for a different realm), it can

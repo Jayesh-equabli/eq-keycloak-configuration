@@ -1,6 +1,7 @@
 package com.equabli.keycloak;
 
 import org.jboss.logging.Logger;
+import org.keycloak.models.ClientModel;
 import org.keycloak.models.RealmModel;
 
 /**
@@ -164,5 +165,26 @@ public final class IdentityServiceConstants {
      */
     public static String postSetupRedirectUrl(RealmModel realm) {
         return baseUrl(realm) + POST_SETUP_REDIRECT_PATH;
+    }
+
+    /**
+     * {@code client}'s <b>Home URL</b> (Admin Console → Clients → [client] → Settings tab — a
+     * genuine UI field, unlike custom client attributes, which Keycloak has no admin-console editor
+     * for), trailing {@code '/'} stripped; or {@code null} when {@code client} is {@code null} or
+     * Home URL is unset/blank — meaning this client keeps using the post-setup-redirect forwarder.
+     *
+     * <p>Home URL ({@link ClientModel#getBaseUrl()}) is Keycloak's own built-in field for "where to
+     * redirect/link back to this client," so it doubles as the static per-client destination a
+     * migrated user is sent to after completing UPDATE_PASSWORD/CONFIGURE_TOTP — no custom
+     * attribute needed. See {@link com.equabli.keycloak.authenticator.MigratedUserAuthenticator}
+     * for why this has to be static per client rather than derived from the login request.
+     */
+    public static String postLoginRedirectOrigin(ClientModel client) {
+        String value = client == null ? null : client.getBaseUrl();
+        if (isBlank(value)) {
+            return null;
+        }
+        value = value.trim();
+        return value.endsWith("/") ? value.substring(0, value.length() - 1) : value;
     }
 }
