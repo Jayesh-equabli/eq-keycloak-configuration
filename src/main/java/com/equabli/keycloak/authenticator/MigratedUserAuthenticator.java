@@ -224,7 +224,9 @@ public class MigratedUserAuthenticator extends UsernamePasswordForm {
         String base = IdentityServiceConstants.postSetupRedirectUrl(realm);
         String sep = base.contains("?") ? "&" : "?";
         base = base + sep + "uid=" + user.getId();
-        log.infof("redirect uri, userName %s, %s", user.getUsername(), base);
+        log.infof("redirect uri, userName %s, client %s (homeUrl=%s, rootUrl=%s), no Home URL -> forwarder %s",
+                user.getUsername(), client == null ? null : client.getClientId(),
+                client == null ? null : client.getBaseUrl(), client == null ? null : client.getRootUrl(), base);
         return base;
     }
 }
