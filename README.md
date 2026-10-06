@@ -45,21 +45,27 @@ prevents repeated login attempts from firing an email each time.
 
 ### Post-setup redirect (where the user lands afterwards)
 
-Every migrated user should land on their own tenant instance once they finish setting the password
-and enrolling TOTP — but each tenant URL is different, and Keycloak's *Valid Redirect URIs* only
-allow a trailing `*` on the **path**, never in the host, so the per-tenant URLs can't be registered
-individually. To avoid that, the `reduri` in the action token points at **one stable identity-service
-forwarder endpoint** carrying the Keycloak user id:
+Once a user finishes setting the password (and enrolling TOTP) — from a migrated-user login or from
+"Forgot Password?" — they should land back on the site they started from (e.g. a user who opened
+`stage.tenant.equabli.io` returns to `stage.tenant.equabli.io`), whatever their org type. Every
+tenant URL is different, and Keycloak's *Valid Redirect URIs* only allow a trailing `*` on the
+**path**, never in the host, so the per-tenant URLs can't be registered individually. Instead the
+`reduri` in the action token always points at **one stable identity-service forwarder endpoint**
+carrying the Keycloak user id and the Keycloak client the user came from:
 
 ```
-https://dev.equabli.io/identity-service/api/public/user/post-setup-redirect?uid=<keycloakUserId>
+https://dev.equabli.io/identity-service/api/public/user/post-setup-redirect?uid=<keycloakUserId>&cid=<keycloakClientId>
 ```
 
-That endpoint (`UserPublicController#postSetupRedirect`) resolves the user's client/partner
-`env_instance_url` from the database (falling back to `user-activation-baselink`) and returns a `302`
-to it. The forwarder URL is built from the **base URL** (`IDENTITY_SERVICE_BASE_URL`, dev default
-baked into the jar) plus the fixed forwarder path — the SPI appends both the path and `?uid=…` itself
-(see [Configure](#configure-environment-variables-on-the-keycloak-process)).
+That endpoint (`UserPublicController#postSetupRedirect`) owns **all** destination logic: it
+302-redirects to the `cid` client's **Home URL**; without a usable one it falls back to the user's
+client/partner `env_instance_url` from the database, then `user-activation-baselink`. The SPI only
+reports where the user came from — it never picks the destination. `cid` is omitted when there is no
+authentication session (admin-triggered emails), so those users go to their instance URL. The
+forwarder URL is built from the **base URL** (`IDENTITY_SERVICE_BASE_URL`, dev default baked into the
+jar) plus the fixed forwarder path — the SPI appends the path, `?uid=…` and `&cid=…` itself via
+`IdentityServiceConstants.postSetupRedirectUrl(realm, userId, clientId)` (see
+[Configure](#configure-environment-variables-on-the-keycloak-process)).
 
 > **The `*` wildcard belongs only in the Keycloak client's *Valid Redirect URIs*, never in
 > `IDENTITY_SERVICE_BASE_URL`.** The forwarder is the *real URL the browser is redirected to* — a
@@ -81,23 +87,17 @@ console, duplicate the realm's **browser** flow, replace the *Username Password 
 inside the forms subflow with **Username Password Form (Migration Setup Email)** (same requirement),
 and bind the copy as the realm's Browser Flow.
 
-**Equabli-internal users with more than one front-end (e.g. `dev.eqapp.ai` and
-`client.eqapp.ai`):** rather than always going through the forwarder above, a migrated user can be
-sent straight back to the site they logged in from. This can't be derived automatically from the
-login request when the client is a Cloudflare Access IdP integration — Cloudflare's callback URL
-is the same for every app behind it, so Keycloak never sees the real front-end host. Instead, give
-each front-end its own Keycloak client (its own Cloudflare Access identity-provider integration —
-see [NEW_REALM_CHECKLIST.md](NEW_REALM_CHECKLIST.md#1-cloudflare-access-oidc-client)) and set that
-client's **Home URL** (Settings tab — a genuine admin-console field; Keycloak clients have no
-generic custom-attribute editor) to its real origin, e.g. `https://dev.eqapp.ai`.
-`MigratedUserAuthenticator` checks the authenticating client's Home URL first, before falling back
-to the forwarder.
-
-**Also register the Home URL under that same client's Valid Redirect URIs** (e.g.
-`https://dev.eqapp.ai/*`), alongside the existing Cloudflare callback entry. The action-token link
-Keycloak emails the user is validated against the token's `azp` client's Valid Redirect URIs when
-clicked — exactly the same check described above for the forwarder URL — so without this entry the
-emailed setup link 400s right after the user finishes UPDATE_PASSWORD/CONFIGURE_TOTP.
+**Home URL per front-end (required for "return to where you came from"):** the site a user started
+from can't be derived from the login request when the client is a Cloudflare Access IdP integration
+— Cloudflare's callback URL is the same for every app behind it, so Keycloak never sees the real
+front-end host. Instead, give each front-end its own Keycloak client (its own Cloudflare Access
+identity-provider integration — see
+[NEW_REALM_CHECKLIST.md](NEW_REALM_CHECKLIST.md#1-cloudflare-access-oidc-client)) and set that
+client's **Home URL** (Settings tab) to its real origin, e.g. `https://stage.tenant.equabli.io`. The
+forwarder reads it through the Keycloak admin API, so identity-service's `identity-service` admin
+client needs the `realm-management` **`view-clients`** role. Only the forwarder URL needs to be in
+the client's Valid Redirect URIs — the Home URL does not, because Keycloak redirects to the forwarder
+and identity-service issues the final 302.
 
 > **New-realm gotcha:** when duplicating the browser flow for a new realm, check the config (gear
 > icon) on the **User session count limiter** execution that precedes the password form. If it was

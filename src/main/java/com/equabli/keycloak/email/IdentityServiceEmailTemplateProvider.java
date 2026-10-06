@@ -181,12 +181,19 @@ public class IdentityServiceEmailTemplateProvider extends FreeMarkerEmailTemplat
         return isBlank(configured) ? realm.getName() : configured.trim();
     }
 
-    /** Post-setup/reset landing URL: the shared forwarder base plus this user's Keycloak id. */
+    /**
+     * Post-setup/reset landing URL: the shared forwarder plus this user's Keycloak id and, when the
+     * email was triggered from a login page ("Forgot Password?"), the client the user came from — so
+     * identity-service can send them back to that client's Home URL. Admin-triggered emails have no
+     * authentication session; {@code cid} is then omitted and identity-service falls back to the
+     * user's instance URL.
+     */
     private String resolveRedirectUri() {
-        String base = IdentityServiceConstants.postSetupRedirectUrl(realm);
-        String sep = base.contains("?") ? "&" : "?";
-        String redirectUri = base + sep + "uid=" + user.getId();
-        log.infof("Forgot-password redirect uri for %s: %s", user.getUsername(), redirectUri);
+        String originClientId = authenticationSession == null
+                ? null : IdentityServiceConstants.clientIdOf(authenticationSession.getClient());
+        String redirectUri = IdentityServiceConstants.postSetupRedirectUrl(realm, user.getId(), originClientId);
+        log.infof("Forgot-password redirect uri for %s (client %s): %s", user.getUsername(), originClientId,
+                redirectUri);
         return redirectUri;
     }
 

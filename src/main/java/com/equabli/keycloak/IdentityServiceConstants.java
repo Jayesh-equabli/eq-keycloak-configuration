@@ -4,6 +4,9 @@ import org.jboss.logging.Logger;
 import org.keycloak.models.ClientModel;
 import org.keycloak.models.RealmModel;
 
+import java.net.URLEncoder;
+import java.nio.charset.StandardCharsets;
+
 /**
  * Single source of truth for every hardcoded constant used by this SPI — the identity-service
  * base URL, the static endpoint paths appended to it, the environment-variable override keys, and
@@ -58,6 +61,15 @@ public final class IdentityServiceConstants {
      */
     public static final String POST_SETUP_REDIRECT_PATH =
             "/identity-service/api/public/user/post-setup-redirect";
+    /**
+     * Forwarder query param carrying the user's Keycloak id.
+     */
+    public static final String POST_SETUP_REDIRECT_PARAM_UID = "uid";
+    /**
+     * Forwarder query param carrying the Keycloak {@code clientId} the user started from; identity-service
+     * redirects to that client's Home URL.
+     */
+    public static final String POST_SETUP_REDIRECT_PARAM_CID = "cid";
     /**
      * Shared secret sent as the {@code X-Internal-Secret} header on the mail callbacks.
      */
@@ -168,23 +180,34 @@ public final class IdentityServiceConstants {
     }
 
     /**
-     * {@code client}'s <b>Home URL</b> (Admin Console → Clients → [client] → Settings tab — a
-     * genuine UI field, unlike custom client attributes, which Keycloak has no admin-console editor
-     * for), trailing {@code '/'} stripped; or {@code null} when {@code client} is {@code null} or
-     * Home URL is unset/blank — meaning this client keeps using the post-setup-redirect forwarder.
+     * Post-setup/reset landing URL handed to the action token:
+     * {@link #postSetupRedirectUrl(RealmModel)} + {@code ?uid=<userId>} and, when known,
+     * {@code &cid=<clientId>} — the Keycloak client the user started from. identity-service resolves
+     * that client's <b>Home URL</b> and 302-redirects there, so the user lands back on the site they
+     * came from (e.g. {@code stage.tenant.equabli.io}); without a {@code cid} it falls back to the
+     * user's instance URL. Every destination decision lives in identity-service — this SPI only
+     * reports where the user came from.
      *
-     * <p>Home URL ({@link ClientModel#getBaseUrl()}) is Keycloak's own built-in field for "where to
-     * redirect/link back to this client," so it doubles as the static per-client destination a
-     * migrated user is sent to after completing UPDATE_PASSWORD/CONFIGURE_TOTP — no custom
-     * attribute needed. See {@link com.equabli.keycloak.authenticator.MigratedUserAuthenticator}
-     * for why this has to be static per client rather than derived from the login request.
+     * @param clientId the authenticating client's {@code clientId}; {@code null}/blank when there is
+     *                 no authentication session (e.g. admin-triggered emails), in which case it is omitted
      */
-    public static String postLoginRedirectOrigin(ClientModel client) {
-        String value = client == null ? null : client.getBaseUrl();
-        if (isBlank(value)) {
-            return null;
+    public static String postSetupRedirectUrl(RealmModel realm, String userId, String clientId) {
+        String base = postSetupRedirectUrl(realm);
+        StringBuilder url = new StringBuilder(base)
+                .append(base.contains("?") ? '&' : '?')
+                .append(POST_SETUP_REDIRECT_PARAM_UID).append('=').append(encode(userId));
+        if (!isBlank(clientId)) {
+            url.append('&').append(POST_SETUP_REDIRECT_PARAM_CID).append('=').append(encode(clientId));
         }
-        value = value.trim();
-        return value.endsWith("/") ? value.substring(0, value.length() - 1) : value;
+        return url.toString();
+    }
+
+    private static String encode(String value) {
+        return URLEncoder.encode(value, StandardCharsets.UTF_8);
+    }
+
+    /** {@code client}'s {@code clientId}, or {@code null} when there is no client. */
+    public static String clientIdOf(ClientModel client) {
+        return client == null ? null : client.getClientId();
     }
 }

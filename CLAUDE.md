@@ -106,11 +106,15 @@ When adding a new identity-service endpoint call: add its static path + a builde
 Both flows build an `ExecuteActionsActionToken` whose redirect URI must survive Keycloak's *Valid
 Redirect URIs* check. Each migrated user's real destination is a different per-tenant host, and
 Keycloak only allows a trailing `*` on the **path**, never the host — so per-tenant URLs can't be
-registered. Instead the token points at **one stable forwarder** (`postSetupRedirectUrl()` +
-`?uid=<keycloakUserId>`); identity-service's `UserPublicController#postSetupRedirect` resolves the
-real instance URL server-side and returns a `302`.
+registered. Instead the token points at **one stable forwarder**
+(`postSetupRedirectUrl(realm, userId, clientId)` → `?uid=<keycloakUserId>&cid=<keycloakClientId>`);
+identity-service's `UserPublicController#postSetupRedirect` redirects to the `cid` client's Home URL
+(falling back to the user's instance URL) and returns a `302`.
 
 Consequences to keep in mind when touching redirect logic:
+- **All destination logic lives in identity-service.** Both providers always use the forwarder; the
+  SPI only reports `uid` and the originating client (`cid`, omitted when there is no authentication
+  session). Don't reintroduce direct-to-Home-URL redirects in the SPI.
 - The forwarder URL (`IDENTITY_SERVICE_BASE_URL` + fixed path) must be registered — **with** a
   trailing `*` — under the token's `azp` client's *Valid Redirect URIs*, or the action-token page
   fails with `400 Bad Request` (invalid redirect uri).
