@@ -80,7 +80,8 @@ In Keycloak (**Clients → Create client**):
 
 After saving, under **Service account roles**, assign the `realm-management` client roles the
 admin operations need — at minimum `manage-users`, `view-users`, `query-users`, and `view-clients`
-(the post-setup redirect forwarder reads the originating client's Home URL). ⚠️ Cross-check
+(the post-setup redirect forwarder reads the originating client's Home URL), plus `manage-clients` if
+identity-service should set the `instanceClientIds` client attribute (`PUT /users/instances/keycloak-client`). ⚠️ Cross-check
 against `KeycloakConfig`/the admin-client calls in `eq-identity-service` if that service's user
 management surface has grown, since the exact role set isn't centralized in one place.
 
@@ -150,6 +151,14 @@ Requires this repo's jar already deployed to the target Keycloak server's `provi
 > *before* the password form ever renders — a generic `AuthenticationFlowException` in the server
 > log with no client-facing error, which looks like a flow-binding or SPI problem but isn't. Leave
 > it unconfigured unless this realm actually needs a session cap.
+
+## 3b. Instance access check
+
+Follow [README.md](README.md#instance-access-check) "Realm setup": declare the `allInstanceAccess` /
+`instanceClientIds` user-profile attributes (admin-only), backfill via identity-service, set `instanceClientIds` on
+each per-tenant client, build the `browser-equabli` flow (README step 5 — the 14 admin-console steps; the
+check sits at the top level after `equabli-authenticate`, never inside the forms / 2FA sub-flow), bind it, start in
+`LOG_ONLY`, then `ENFORCE`.
 
 ## 4. Password policy
 

@@ -1,6 +1,9 @@
+com\equabli\keycloak\authenticator\InstanceAccessAuthenticator.class
 com\equabli\keycloak\authenticator\SetupMailClient.class
 com\equabli\keycloak\IdentityServiceConstants.class
 com\equabli\keycloak\authenticator\MigratedUserAuthenticator.class
 com\equabli\keycloak\email\IdentityServiceEmailTemplateProviderFactory.class
+com\equabli\keycloak\authenticator\InstanceAccessAuthenticatorFactory.class
 com\equabli\keycloak\email\IdentityServiceEmailTemplateProvider.class
+com\equabli\keycloak\IdentityServiceConstants$InstanceAccessMode.class
 com\equabli\keycloak\authenticator\MigratedUserAuthenticatorFactory.class

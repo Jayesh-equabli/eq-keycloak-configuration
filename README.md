@@ -1,12 +1,14 @@
 # keycloak-reset-mail-spi
 
-Two Keycloak SPIs backing the Equabli SSO migration:
+Keycloak SPIs backing the Equabli SSO migration:
 
 1. **Reset-mail provider** (`com.equabli.keycloak.email`) — delegates the **Forgot Password** email
    to the Equabli **identity-service** instead of Keycloak's built-in SMTP sender.
 2. **Migrated-user authenticator** (`com.equabli.keycloak.authenticator`) — a drop-in replacement
    for the browser flow's *Username Password Form* that emails bulk-migrated (passwordless) users a
    set-password + configure-TOTP link on their first sign-in attempt.
+3. **Instance access check** (`com.equabli.keycloak.authenticator`) — refuses users who have no access to the
+   client instance (tenant site) the Keycloak client serves.
 
 ## Reset-mail provider
 
@@ -106,6 +108,145 @@ and identity-service issues the final 302.
 > `AuthenticationFlowException` in the server log and no useful client-facing error, which looks like
 > a flow-binding or SPI problem but isn't. Leave it unconfigured (as in the working reference realm)
 > unless you actually want a session cap.
+
+## Instance access check
+
+End-to-end flow across identity-service, onboarding and this SPI (incl. rollout order and test checklist):
+`eq-identity-service/docs/INSTANCE_ACCESS_FLOW.md`.
+
+Each tenant site has its own Keycloak client. A user may only log in through it when identity-service granted them
+that client instance (`auth.map_principle_instance`) or all instances (`auth.principle.all_instance_access`).
+
+| Where | Attribute | Value | Written by |
+|---|---|---|---|
+| Keycloak client | `instanceClientIds` | `data.client.client_id`(s) it serves, comma-separated, e.g. `1042` | identity-service `PUT /users/instances/keycloak-client` |
+| Keycloak user | `allInstanceAccess` | `true` / `false` | identity-service, on every grant change |
+| Keycloak user | `instanceClientIds` | one value per granted client id | identity-service, on every grant change |
+
+The user passes when `allInstanceAccess=true` or one of their `instanceClientIds` is in the client's list. A client
+**without** `instanceClientIds` is not checked — leave it unset on the lower-env client shared by several tenants
+(identity-service's own SSO check still applies there) and on admin/service clients.
+
+### Realm setup (per realm, in order)
+
+1. **User profile** (Realm settings → User profile → Create attribute), for `allInstanceAccess` and
+   `instanceClientIds` (the latter *Multivalued*): **Who can edit = admin only, Who can view = admin only**, not
+   required. Without the declaration Keycloak silently drops the attributes (identity-service's sync reports a
+   failure); if users could edit them they could grant themselves access. JSON editor tab — add to `attributes`
+   (keep the existing entries; via REST `PUT /admin/realms/{realm}/users/profile` replaces the whole config, so GET
+   it first):
+
+   ```json
+   {
+     "name": "allInstanceAccess",
+     "displayName": "All instance access",
+     "validations": { "options": { "options": ["true", "false"] } },
+     "annotations": {},
+     "permissions": { "view": ["admin"], "edit": ["admin"] },
+     "multivalued": false
+   },
+   {
+     "name": "instanceClientIds",
+     "displayName": "Instance client ids",
+     "validations": { "pattern": { "pattern": "^[0-9]+$", "error-message": "Instance client id must be a number" } },
+     "annotations": {},
+     "permissions": { "view": ["admin"], "edit": ["admin"] },
+     "multivalued": true
+   }
+   ```
+2. **identity-service admin client** (`identity-service`): add `realm-management` **`manage-clients`** if
+   identity-service should write the client attribute (else set it with `kcadm`, below).
+3. **Backfill users:** identity-service `POST /users/instances/keycloak-sync` → check `failed` is 0.
+4. **Mark the restricted clients:** clients whose `data.client.keycloak_client_id` is set are synced automatically
+   (onboarding client create/update, or identity-service `POST /users/instances/keycloak-client/sync-all` after
+   setting the column by hand). Keycloak clients not in that column (e.g. Cloudflare OIDC clients) are set with
+   `PUT /users/instances/keycloak-client` with
+   `{"keycloakClientId": "cloudflare-oidc-tenant1", "clientIds": [1042]}` for every per-tenant client (Cloudflare
+   OIDC client and/or SSO-UI client). Or by hand:
+   `kcadm.sh update clients/<client-uuid> -r <realm> -s 'attributes.instanceClientIds=1042'`.
+5. **Browser flow:** the check must run after the user is known on **every** path, including the SSO cookie. A
+   REQUIRED step next to ALTERNATIVE steps makes Keycloak ignore the alternatives (and would skip OTP), so the login
+   paths are wrapped in a REQUIRED sub-flow and the check sits after it at the top level. Do **not** put the check
+   inside the forms or Conditional 2FA sub-flow: there it is skipped on the cookie path, skipped for users without
+   OTP, and (next to the ALTERNATIVE OTP Form) breaks 2FA. Target layout (verified on dev, 2026-10-09):
+
+   ```
+   browser-equabli (bound as Browser flow)
+    ├─ equabli-authenticate                              REQUIRED     (sub-flow, Generic)
+    │   ├─ Cookie                                        ALTERNATIVE
+    │   ├─ Identity Provider Redirector                  ALTERNATIVE
+    │   └─ equabli-forms                                 ALTERNATIVE  (sub-flow, Generic)
+    │       ├─ User session count limiter                REQUIRED
+    │       ├─ Username Password Form (Migration Setup Email)  REQUIRED
+    │       └─ equabli-conditional-otp                   CONDITIONAL  (sub-flow, Generic)
+    │           ├─ Condition - user configured           REQUIRED
+    │           └─ OTP Form                              ALTERNATIVE
+    └─ Equabli Instance Access Check                     REQUIRED     ← gear icon: Mode
+   ```
+
+   The admin console can't move existing steps into a new sub-flow and has no flow import (Partial import doesn't
+   cover flows), so build a **new** flow by hand in the admin console, next to the current one — the current one
+   stays as the rollback:
+
+   1. **Authentication → Flows → Create flow**: name `browser-equabli`, flow type **Basic flow** → Create.
+   2. **Add sub-flow**: `equabli-authenticate`, flow type **Generic** → Add; requirement **Required**.
+   3. **Add execution** (top-level button, not the `+` on a row): **Equabli Instance Access Check** → Add;
+      **Required**. It must be at the top level, below `equabli-authenticate`.
+   4. Gear icon on Equabli Instance Access Check → config:
+
+      | Field | Value |
+      |---|---|
+      | Alias | `Equabli instance access` |
+      | Authenticator Reference / Max Age | empty |
+      | Mode | **LOG_ONLY** (later **ENFORCE**; **OFF** = rollback) |
+
+      → Save.
+   5. `+` on `equabli-authenticate` → Add step **Cookie** → **Alternative**.
+   6. `+` on `equabli-authenticate` → Add step **Identity Provider Redirector** → **Alternative**.
+   7. `+` on `equabli-authenticate` → Add sub-flow `equabli-forms`, **Generic** → **Alternative**.
+   8. `+` on `equabli-forms` → Add step **User session count limiter** → **Required**, then gear icon → config
+      (values used on dev; keep them in line with the old flow's limiter):
+
+      | Field | Value |
+      |---|---|
+      | Alias | `Equabli-session-limiter-client` |
+      | Authenticator Reference / Max Age | empty |
+      | Maximum concurrent sessions for each user within this realm | `1` |
+      | Maximum concurrent sessions for each user per keycloak client | `1` |
+      | Behavior when user session limit is exceeded | `Terminate oldest session` |
+      | Optional custom error message | `session expired custom message` |
+
+      → Save. A stale or wrong limiter config can reject every login before the password form renders — see the new-realm gotcha.
+   9. `+` on `equabli-forms` → Add step **Username Password Form (Migration Setup Email)** → **Required**.
+   10. `+` on `equabli-forms` → Add sub-flow `equabli-conditional-otp`, **Generic** → **Conditional**.
+   11. `+` on `equabli-conditional-otp` → Add condition **Condition - user configured** → **Required**.
+   12. `+` on `equabli-conditional-otp` → Add step **OTP Form** → **Alternative** (Keycloak 26 default; lets
+       WebAuthn / recovery codes be added later as further alternatives). Users without OTP are not affected either
+       way: *Condition - user configured* skips the whole sub-flow for them, so they never see the OTP form.
+   13. Compare with the layout above (wrong order within a level: drag the handle; wrong parent: delete and re-add
+       from the right row's `+`).
+   14. **Action → Bind flow → Browser flow** → Save. The flow header changes from "Not in use" to "Used by".
+       Rollback: bind the old flow again.
+
+   If users log in through an external identity provider, also add the check to that provider's **Post login
+   flow**. Repeat per realm (dev and qa are configured independently).
+
+   Verify: an OTP user is still asked for the code; a user without OTP and without a grant produces
+   `[instance-access] LOG_ONLY would deny ...`; logged in on client A then opening client B (no grant) in the same
+   browser also produces it, without a login page.
+6. **Mode** (gear icon on the step, alias `Equabli instance access`): `LOG_ONLY` first. Log in as a few users and check
+   the server log for `[instance-access] LOG_ONLY would deny ...` — every line must be a user who really should be
+   refused. Then switch to `ENFORCE`. Back to `OFF` (or disable the step) is the instant rollback; no restart.
+
+### Rollout across realms on one server (dev + qa)
+
+Deploying the jar only makes the step *available*; a realm is affected only after its browser flow contains it with a
+mode other than OFF. So: deploy the jar once (restart takes all realms down briefly), then run the realm setup above
+for dev, and later for qa, independently. Keep this release additive — the migrated-user form in the same jar
+changes for every realm at once.
+
+Denied logins show "You do not have access to this application." and record an `access_denied` login event.
+Revoking access in identity-service also ends the user's Keycloak sessions, so the next login re-runs the check.
 
 ## Build
 

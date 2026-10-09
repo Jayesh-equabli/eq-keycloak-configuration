@@ -1,1 +1,2 @@
 com.equabli.keycloak.authenticator.MigratedUserAuthenticatorFactory
+com.equabli.keycloak.authenticator.InstanceAccessAuthenticatorFactory

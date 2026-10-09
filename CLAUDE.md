@@ -5,7 +5,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Overview
 
 `keycloak-reset-mail-spi` is a **Keycloak SPI** (Java 17, Maven) that plugs into a Keycloak server to
-support the Equabli SSO-migration rollout. It packages two independent providers into one jar:
+support the Equabli SSO-migration rollout. It packages three independent providers into one jar:
 
 1. **Reset-mail provider** (`com.equabli.keycloak.email`) — overrides Keycloak's **Forgot Password**
    email so it is rendered and delivered by the Equabli **identity-service** instead of Keycloak's
@@ -16,6 +16,8 @@ support the Equabli SSO-migration rollout. It packages two independent providers
 2. **Migrated-user authenticator** (`com.equabli.keycloak.authenticator`) — a drop-in replacement for
    the browser flow's *Username Password Form*. When a bulk-migrated (passwordless) user tries to log
    in, instead of rejecting them it emails a set-password + configure-TOTP link via identity-service.
+3. **Instance access authenticator** (`InstanceAccessAuthenticator`) — refuses a login when the user has no access
+   to the client instance (tenant site) the Keycloak client serves. See "Instance access check" below.
 
 This SPI is a companion to the `eq-identity-service` microservice, which hosts the callback endpoints
 (`/public/user/internal/*`) and the `/public/user/post-setup-redirect` forwarder this SPI calls.
@@ -59,7 +61,8 @@ Keycloak discovers providers via `META-INF/services/` files — **a new provider
 is listed here**:
 
 - `META-INF/services/org.keycloak.authentication.AuthenticatorFactory`
-  → `com.equabli.keycloak.authenticator.MigratedUserAuthenticatorFactory`
+  → `com.equabli.keycloak.authenticator.MigratedUserAuthenticatorFactory`,
+    `com.equabli.keycloak.authenticator.InstanceAccessAuthenticatorFactory`
 - `META-INF/services/org.keycloak.email.EmailTemplateProviderFactory`
   → `com.equabli.keycloak.email.IdentityServiceEmailTemplateProviderFactory`
 
@@ -146,6 +149,27 @@ log a length + prefix preview, as the existing code does.
 `MigratedUserAuthenticator` records `setupMailSentAt` (a Keycloak user attribute) and suppresses
 re-sending within the cooldown window so repeated login attempts don't fire an email each time.
 
+### Instance access check
+
+End-to-end flow: `eq-identity-service/docs/INSTANCE_ACCESS_FLOW.md`.
+
+`InstanceAccessAuthenticator` compares the client attribute `instanceClientIds` (comma-separated
+`data.client.client_id`s) with the user attributes `allInstanceAccess` / `instanceClientIds`. identity-service owns
+all of them (DB is the source of truth; it writes them via the admin API — `InstanceAccessSyncService`,
+`PUT /users/instances/keycloak-client`). Names are constants in `IdentityServiceConstants` and must match
+identity-service's `Constants.InstanceAccessAttributes`.
+
+- A client without `instanceClientIds` is never checked (lower-env shared client, admin/service clients).
+- **Per-realm rollout:** the mode lives on the flow execution's config (`instanceAccessMode`: OFF / LOG_ONLY /
+  ENFORCE; no config = OFF), not in an env var — dev and qa share one Keycloak server, and deploying the jar must not
+  change any realm until that realm opts in. Unknown values are treated as OFF (logged).
+- It must run after the user is identified on **every** path, including the SSO-cookie path: a REQUIRED step next to
+  ALTERNATIVE ones makes Keycloak ignore the alternatives, so the browser flow is rebuilt as `browser-equabli`
+  (README step 5: layout and the manual admin-console steps). Never put the
+  check inside the forms / Conditional 2FA sub-flow.
+- LOG_ONLY logs `[instance-access] LOG_ONLY would deny ...` and lets the user in; ENFORCE shows an error page and
+  records an `access_denied` login event.
+
 ## Conventions
 
 - **All constants go in `IdentityServiceConstants`** — base URL, static paths, env-var names,
@@ -154,4 +178,4 @@ re-sending within the cooldown window so repeated login attempts don't fire an e
   and load cleanly inside the server.
 - Startup markers: factory `init()` methods log the resolved URL so a deployed server's logs confirm
   which environment the SPI is pointed at.
-- Keep the two providers independent; they share only `IdentityServiceConstants` and the mail secret.
+- Keep the providers independent; they share only `IdentityServiceConstants` (and the two mail flows the secret).

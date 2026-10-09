@@ -93,6 +93,45 @@ public final class IdentityServiceConstants {
      */
     public static final int DEFAULT_COOLDOWN_SECONDS = 900;
 
+    // ---- Instance access (InstanceAccessAuthenticator) ---------------------------------------
+    /**
+     * Client attribute: comma-separated {@code data.client.client_id}s the Keycloak client serves. A client
+     * without it (or blank) is not instance-restricted. Written by identity-service
+     * ({@code PUT /users/instances/keycloak-client}).
+     */
+    public static final String CLIENT_ATTR_INSTANCE_CLIENT_IDS = "instanceClientIds";
+    /**
+     * User attribute (multi-valued): the {@code data.client.client_id}s the user holds an enabled
+     * {@code auth.map_principle_instance} grant for. Kept in sync by identity-service — never edit by hand.
+     */
+    public static final String USER_ATTR_INSTANCE_CLIENT_IDS = "instanceClientIds";
+    /** User attribute: {@code "true"} when the user has {@code auth.principle.all_instance_access}. */
+    public static final String USER_ATTR_ALL_INSTANCE_ACCESS = "allInstanceAccess";
+    /** Execution config key (gear icon on the flow step) holding the {@link InstanceAccessMode}. */
+    public static final String CONFIG_INSTANCE_ACCESS_MODE = "instanceAccessMode";
+
+    /** Per-realm rollout switch for the instance access check, set on the flow execution's config. */
+    public enum InstanceAccessMode {
+        /** Check skipped; also the behaviour when the execution has no config. */
+        OFF,
+        /** Would-be denials are logged, the login still succeeds. */
+        LOG_ONLY,
+        /** Users without access to the client's instance are refused. */
+        ENFORCE;
+
+        /** Parses a config value; anything blank or unknown is {@link #OFF}. */
+        public static InstanceAccessMode from(String value) {
+            if (value == null || value.isBlank()) {
+                return OFF;
+            }
+            try {
+                return valueOf(value.trim().toUpperCase());
+            } catch (IllegalArgumentException e) {
+                return OFF;
+            }
+        }
+    }
+
     // ---- Dev-only fallbacks -----------------------------------------------------------------
     private static final Logger log = Logger.getLogger(IdentityServiceConstants.class);
 

@@ -1,6 +1,8 @@
 C:\Users\Lenovo\equabli-workspace\eq-keycloak-configuration\src\main\java\com\equabli\keycloak\email\IdentityServiceEmailTemplateProviderFactory.java
+C:\Users\Lenovo\equabli-workspace\eq-keycloak-configuration\src\main\java\com\equabli\keycloak\authenticator\InstanceAccessAuthenticator.java
 C:\Users\Lenovo\equabli-workspace\eq-keycloak-configuration\src\main\java\com\equabli\keycloak\IdentityServiceConstants.java
 C:\Users\Lenovo\equabli-workspace\eq-keycloak-configuration\src\main\java\com\equabli\keycloak\authenticator\MigratedUserAuthenticator.java
 C:\Users\Lenovo\equabli-workspace\eq-keycloak-configuration\src\main\java\com\equabli\keycloak\authenticator\MigratedUserAuthenticatorFactory.java
+C:\Users\Lenovo\equabli-workspace\eq-keycloak-configuration\src\main\java\com\equabli\keycloak\authenticator\InstanceAccessAuthenticatorFactory.java
 C:\Users\Lenovo\equabli-workspace\eq-keycloak-configuration\src\main\java\com\equabli\keycloak\authenticator\SetupMailClient.java
 C:\Users\Lenovo\equabli-workspace\eq-keycloak-configuration\src\main\java\com\equabli\keycloak\email\IdentityServiceEmailTemplateProvider.java
