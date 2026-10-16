@@ -27,6 +27,12 @@ import java.util.stream.Collectors;
  * = {@code true}, or when one of their {@value IdentityServiceConstants#USER_ATTR_INSTANCE_CLIENT_IDS} values is in
  * the client's list. identity-service owns both attributes and keeps them in sync with its database.</p>
  *
+ * <p>Product sites: when the client also has {@value IdentityServiceConstants#CLIENT_ATTR_PRODUCT_CODE} (e.g.
+ * {@code EC}), the list checked is {@value IdentityServiceConstants#CLIENT_ATTR_PRODUCT_CLIENT_IDS} instead — the
+ * clients from {@code instanceClientIds} that subscribe to that product, maintained by identity-service. So a client
+ * user reaches the Collect site only while their client subscribes to Collect. An empty or missing list with a
+ * product code set denies everyone except {@code allInstanceAccess} users (fail closed).</p>
+ *
  * <p>Rollout is per realm through the execution config {@value IdentityServiceConstants#CONFIG_INSTANCE_ACCESS_MODE}
  * ({@link InstanceAccessMode}); no config means {@code OFF}. It must run after the user is identified on
  * <b>every</b> path, including the SSO-cookie path — see the README for the flow layout.</p>
@@ -35,7 +41,7 @@ public class InstanceAccessAuthenticator implements Authenticator {
 
     private static final Logger log = Logger.getLogger(InstanceAccessAuthenticator.class);
 
-    static final String DENIED_MESSAGE = "You do not have access to this application.Please contact your administrator for more information.";
+    static final String DENIED_MESSAGE = "You don't currently have access to this application. Please contact our Support Team for assistance.";
 
     @Override
     public void authenticate(AuthenticationFlowContext context) {
@@ -48,23 +54,28 @@ public class InstanceAccessAuthenticator implements Authenticator {
         RealmModel realm = context.getRealm();
         ClientModel client = context.getAuthenticationSession().getClient();
         UserModel user = context.getUser();
-        Set<String> clientInstances = clientInstanceIds(client);
-        if (clientInstances.isEmpty() || user == null || hasAccess(user, clientInstances)) {
+        String productCode = productCodeOf(client);
+        Set<String> clientInstances = productCode == null
+                ? csvAttribute(client, IdentityServiceConstants.CLIENT_ATTR_INSTANCE_CLIENT_IDS)
+                : csvAttribute(client, IdentityServiceConstants.CLIENT_ATTR_PRODUCT_CLIENT_IDS);
+        boolean unrestricted = productCode == null && clientInstances.isEmpty();
+        if (unrestricted || user == null || hasAccess(user, clientInstances)) {
             context.success();
             return;
         }
 
         String clientId = IdentityServiceConstants.clientIdOf(client);
         if (mode == InstanceAccessMode.LOG_ONLY) {
-            log.warnf("[instance-access] LOG_ONLY would deny realm=%s user=%s client=%s instances=%s userInstances=%s",
-                    realm.getName(), user.getUsername(), clientId, clientInstances, userInstanceIds(user));
+            log.warnf("[instance-access] LOG_ONLY would deny realm=%s user=%s client=%s product=%s instances=%s userInstances=%s",
+                    realm.getName(), user.getUsername(), clientId, productCode, clientInstances, userInstanceIds(user));
             context.success();
             return;
         }
 
-        log.warnf("[instance-access] denied realm=%s user=%s client=%s instances=%s userInstances=%s",
-                realm.getName(), user.getUsername(), clientId, clientInstances, userInstanceIds(user));
+        log.warnf("[instance-access] denied realm=%s user=%s client=%s product=%s instances=%s userInstances=%s",
+                realm.getName(), user.getUsername(), clientId, productCode, clientInstances, userInstanceIds(user));
         context.getEvent().user(user).detail("instance_client_ids", String.join(",", clientInstances))
+                .detail("product_code", productCode == null ? "" : productCode)
                 .error(Errors.ACCESS_DENIED);
         Response challenge = context.form()
                 .setError(DENIED_MESSAGE)
@@ -85,8 +96,14 @@ public class InstanceAccessAuthenticator implements Authenticator {
         return mode;
     }
 
-    private static Set<String> clientInstanceIds(ClientModel client) {
-        String value = client == null ? null : client.getAttribute(IdentityServiceConstants.CLIENT_ATTR_INSTANCE_CLIENT_IDS);
+    /** The client's {@code productCode} attribute, {@code null} when unset or blank. */
+    private static String productCodeOf(ClientModel client) {
+        String value = client == null ? null : client.getAttribute(IdentityServiceConstants.CLIENT_ATTR_PRODUCT_CODE);
+        return value == null || value.isBlank() ? null : value.trim();
+    }
+
+    private static Set<String> csvAttribute(ClientModel client, String attribute) {
+        String value = client == null ? null : client.getAttribute(attribute);
         if (value == null || value.isBlank()) {
             return Set.of();
         }

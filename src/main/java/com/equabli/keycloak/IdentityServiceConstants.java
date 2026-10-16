@@ -101,6 +101,20 @@ public final class IdentityServiceConstants {
      */
     public static final String CLIENT_ATTR_INSTANCE_CLIENT_IDS = "instanceClientIds";
     /**
+     * Client attribute: the product the Keycloak client's site belongs to ({@code conf.product_service.short_name},
+     * e.g. {@code EC}, {@code EN}). When set, only users granted a client in
+     * {@link #CLIENT_ATTR_PRODUCT_CLIENT_IDS} may log in. Set through identity-service
+     * ({@code PUT /users/instances/keycloak-client}).
+     */
+    public static final String CLIENT_ATTR_PRODUCT_CODE = "productCode";
+    /**
+     * Client attribute: comma-separated ids from {@link #CLIENT_ATTR_INSTANCE_CLIENT_IDS} whose client has an active
+     * subscription to {@link #CLIENT_ATTR_PRODUCT_CODE}. Computed by identity-service from its database and rewritten
+     * when a subscription changes — never edit by hand. Missing while a product code is set means nobody passes
+     * (except {@link #USER_ATTR_ALL_INSTANCE_ACCESS} users).
+     */
+    public static final String CLIENT_ATTR_PRODUCT_CLIENT_IDS = "productClientIds";
+    /**
      * User attribute (multi-valued): the {@code data.client.client_id}s the user holds an enabled
      * {@code auth.map_principle_instance} grant for. Kept in sync by identity-service — never edit by hand.
      */

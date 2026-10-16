@@ -122,10 +122,17 @@ that client instance (`auth.map_principle_instance`) or all instances (`auth.pri
 | Keycloak client | `instanceClientIds` | `data.client.client_id`(s) it serves, comma-separated, e.g. `1042` | identity-service `PUT /users/instances/keycloak-client` |
 | Keycloak user | `allInstanceAccess` | `true` / `false` | identity-service, on every grant change |
 | Keycloak user | `instanceClientIds` | one value per granted client id | identity-service, on every grant change |
+| Keycloak client | `productCode` | product of the site, e.g. `EC` (Collect), `EN` (Engage) | identity-service `PUT /users/instances/keycloak-client` |
+| Keycloak client | `productClientIds` | the `instanceClientIds` whose client subscribes to `productCode` | identity-service, on every subscription / client change — never by hand |
 
 The user passes when `allInstanceAccess=true` or one of their `instanceClientIds` is in the client's list. A client
 **without** `instanceClientIds` is not checked — leave it unset on the lower-env client shared by several tenants
 (identity-service's own SSO check still applies there) and on admin/service clients.
+
+**Product sites:** when the client has `productCode`, the list checked is `productClientIds` instead of
+`instanceClientIds`, so a client user reaches e.g. the Collect site only while their client subscribes to Collect.
+`productCode` set with `productClientIds` missing denies everyone except `allInstanceAccess` users. Log lines and the
+`access_denied` event include the product code.
 
 ### Realm setup (per realm, in order)
 
